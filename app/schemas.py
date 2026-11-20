@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Any
@@ -16,13 +17,15 @@ def _two_places(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"))
 
 
-# Digits are capped to fit NUMERIC(18, 2).
-Money = Annotated[
+# Digits are capped to fit NUMERIC(18, 2). SignedMoney is only for the available
+# balance, which can go below zero.
+SignedMoney = Annotated[
     Decimal,
-    Field(ge=0, max_digits=18, decimal_places=2),
+    Field(max_digits=18, decimal_places=2),
     AfterValidator(_two_places),
     PlainSerializer(lambda value: f"{value:.2f}", return_type=str, when_used="json"),
 ]
+Money = Annotated[SignedMoney, Field(ge=0)]
 
 Currency = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
 
@@ -83,3 +86,29 @@ class RefundCreatedData(BaseModel):
     authorization_id: str
     amount: Money
     currency: Currency
+
+
+class WebhookAck(BaseModel):
+    outcome: str
+
+
+class BalanceResponse(BaseModel):
+    account_id: str
+    currency: str
+    available: SignedMoney
+    pending: Money
+
+
+class TransactionItem(BaseModel):
+    authorization_id: str
+    merchant: str | None
+    currency: str
+    status: AuthorizationStatus
+    authorized_amount: Money | None
+    captured_amount: Money
+    refunded_amount: Money
+    created_at: datetime | None
+
+
+class TransactionsResponse(BaseModel):
+    items: list[TransactionItem]

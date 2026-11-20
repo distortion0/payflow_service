@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import ColumnElement, Row, ScalarSelect, func, select
+from sqlalchemy import ColumnElement, Row, ScalarSelect, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.models import accounts, authorization_status, authorizations, fundings, refunds
@@ -12,6 +12,10 @@ from app.schemas import AuthorizationStatus
 
 def _total(column: ColumnElement[Any], *conditions: ColumnElement[bool]) -> ScalarSelect[Any]:
     return select(func.coalesce(func.sum(column), 0)).where(*conditions).scalar_subquery()
+
+
+async def account_exists(conn: AsyncConnection, account_id: str) -> bool:
+    return await conn.scalar(select(exists().where(accounts.c.id == account_id)))
 
 
 async def get_balance(conn: AsyncConnection, account_id: str) -> Row[Any] | None:

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import text
 
+from app.api import router
 from app.config import Settings
 from app.db import ConnectionDep, create_tables, make_engine
 
@@ -23,6 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="PayFlow card operations", lifespan=lifespan)
     app.state.settings = settings
     app.state.engine = engine
+    app.include_router(router)
 
     @app.get("/health")
     async def health(conn: ConnectionDep) -> dict[str, str]:
