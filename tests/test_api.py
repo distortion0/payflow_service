@@ -1,33 +1,14 @@
-import hashlib
-import hmac
 import json
 from typing import Any
 
 import pytest
-from httpx import AsyncClient, Response
+from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.models import events
 from tests.factories import auth_captured, event, funded
-
-SECRET = "whsec_test_123"
-
-
-def sign(body: bytes, secret: str = SECRET) -> str:
-    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-
-
-async def post_raw(client: AsyncClient, body: bytes, signature: str | None) -> Response:
-    headers = {"Content-Type": "application/json"}
-    if signature is not None:
-        headers["X-PayFlow-Signature"] = signature
-    return await client.post("/webhooks", content=body, headers=headers)
-
-
-async def post_event(client: AsyncClient, event: dict[str, Any]) -> Response:
-    body = json.dumps(event, separators=(",", ":")).encode()
-    return await post_raw(client, body, sign(body))
+from tests.helpers import assert_happy_path_responses, post_event, post_raw, sign
 
 
 async def stored_events(conn: AsyncConnection) -> int:
@@ -92,61 +73,7 @@ async def test_happy_path_over_http_gives_the_responses_from_the_assignment(
         response = await post_event(client, payload)
         assert (response.status_code, response.json()) == (200, {"outcome": "processed"})
 
-    balance = await client.get("/accounts/acc_1/balance")
-    assert balance.status_code == 200
-    assert balance.json() == {
-        "account_id": "acc_1",
-        "currency": "USD",
-        "available": "585.00",
-        "pending": "15.00",
-    }
-
-    transactions = await client.get("/accounts/acc_1/transactions")
-    assert transactions.status_code == 200
-    assert transactions.json() == {
-        "items": [
-            {
-                "authorization_id": "auth_100",
-                "merchant": "AWS",
-                "currency": "USD",
-                "status": "captured",
-                "authorized_amount": "125.50",
-                "captured_amount": "125.50",
-                "refunded_amount": "25.50",
-                "created_at": "2026-10-19T10:01:00Z",
-            },
-            {
-                "authorization_id": "auth_101",
-                "merchant": "Uber",
-                "currency": "USD",
-                "status": "reversed",
-                "authorized_amount": "40.00",
-                "captured_amount": "0.00",
-                "refunded_amount": "0.00",
-                "created_at": "2026-10-19T10:02:00Z",
-            },
-            {
-                "authorization_id": "auth_102",
-                "merchant": "Hilton",
-                "currency": "USD",
-                "status": "captured",
-                "authorized_amount": "300.00",
-                "captured_amount": "300.00",
-                "refunded_amount": "0.00",
-                "created_at": "2026-10-19T10:10:00Z",
-            },
-            {
-                "authorization_id": "auth_103",
-                "merchant": "Slack",
-                "currency": "USD",
-                "status": "pending",
-                "authorized_amount": "15.00",
-                "captured_amount": "0.00",
-                "refunded_amount": "0.00",
-                "created_at": "2026-10-19T12:30:00Z",
-            },
-        ]
-    }
+    await assert_happy_path_responses(client)
 
 
 async def test_unknown_account_is_404_on_both_reads(client: AsyncClient) -> None:
