@@ -12,10 +12,13 @@ from sqlalchemy import (
     Numeric,
     Table,
     Text,
+    case,
     func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+
+from app.schemas import AuthorizationStatus
 
 metadata = MetaData()
 
@@ -53,7 +56,7 @@ fundings = Table(
     Column("account_id", Text, nullable=False, index=True),
     Column("amount", AMOUNT, nullable=False),
     Column("currency", Text, nullable=False),
-    CheckConstraint("amount > 0", name="fundings_amount_positive"),
+    CheckConstraint("amount >= 0", name="fundings_amount_non_negative"),
 )
 
 # One row per authorization; each event type fills only its own columns:
@@ -71,8 +74,15 @@ authorizations = Table(
     Column("captured_amount", AMOUNT),
     Column("reversed", Boolean, nullable=False, server_default=text("false")),
     Column("created_at", TIMESTAMPTZ),
-    CheckConstraint("authorized_amount > 0", name="authorizations_authorized_amount_positive"),
-    CheckConstraint("captured_amount > 0", name="authorizations_captured_amount_positive"),
+    CheckConstraint("authorized_amount >= 0", name="authorizations_authorized_amount_non_negative"),
+    CheckConstraint("captured_amount >= 0", name="authorizations_captured_amount_non_negative"),
+)
+
+# The only place that knows how the facts above turn into a status.
+authorization_status = case(
+    (authorizations.c.captured_amount.is_not(None), AuthorizationStatus.CAPTURED.value),
+    (authorizations.c.reversed, AuthorizationStatus.REVERSED.value),
+    else_=AuthorizationStatus.PENDING.value,
 )
 
 refunds = Table(
@@ -83,5 +93,5 @@ refunds = Table(
     Column("account_id", Text, nullable=False, index=True),
     Column("amount", AMOUNT, nullable=False),
     Column("currency", Text, nullable=False),
-    CheckConstraint("amount > 0", name="refunds_amount_positive"),
+    CheckConstraint("amount >= 0", name="refunds_amount_non_negative"),
 )

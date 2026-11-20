@@ -1,5 +1,8 @@
+import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -9,12 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.config import Settings
 from app.db import create_tables
+from app.events import process_event
 from app.main import create_app
 from app.models import metadata
+from app.schemas import Envelope, Outcome
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+asyncpg://payflow:payflow@localhost:5432/payflow_test"
 )
+HAPPY_PATH = Path(__file__).parent / "data" / "happy_path.json"
+
+Deliver = Callable[[dict[str, Any]], Awaitable[Outcome | None]]
 
 
 async def truncate_all(engine: AsyncEngine) -> None:
@@ -38,9 +46,30 @@ async def app(settings: Settings) -> AsyncIterator[FastAPI]:
 
 
 @pytest.fixture
-async def conn(app: FastAPI) -> AsyncIterator[AsyncConnection]:
-    async with app.state.engine.connect() as conn:
+def engine(app: FastAPI) -> AsyncEngine:
+    return app.state.engine
+
+
+@pytest.fixture
+async def conn(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
+    async with engine.connect() as conn:
         yield conn
+
+
+@pytest.fixture
+def deliver(engine: AsyncEngine) -> Deliver:
+    """Process one raw event the way a webhook request would: on its own connection."""
+
+    async def _deliver(event: dict[str, Any]) -> Outcome | None:
+        async with engine.connect() as conn:
+            return await process_event(conn, Envelope.model_validate(event))
+
+    return _deliver
+
+
+@pytest.fixture
+def happy_path() -> list[dict[str, Any]]:
+    return json.loads(HAPPY_PATH.read_text())
 
 
 @pytest.fixture
