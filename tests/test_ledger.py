@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.queries import get_balance, list_transactions
 from app.schemas import AuthorizationStatus, Outcome
 from tests.conftest import Deliver
-from tests.factories import auth_captured, auth_created, funded, refund
+from tests.factories import auth_captured, auth_created, auth_reversed, funded, refund
 
 PENDING, CAPTURED, REVERSED = AuthorizationStatus
 
@@ -129,3 +129,32 @@ async def test_events_before_funding_are_kept_and_counted_once_the_account_exist
     await deliver(funded("100.00", account_id="acc_9"))
 
     await assert_balance(conn, "acc_9", available="50.00", pending="0.00")
+
+
+async def test_reversal_releases_the_whole_hold(deliver: Deliver, conn: AsyncConnection) -> None:
+    await deliver(funded("1000.00"))
+    await deliver(auth_created("auth_1", "100.00"))
+    await assert_balance(conn, "acc_1", available="900.00", pending="100.00")
+
+    await deliver(auth_reversed("auth_1", "100.00"))
+
+    await assert_balance(conn, "acc_1", available="1000.00", pending="0.00")
+    assert summary(await list_transactions(conn, "acc_1")) == [
+        ("auth_1", REVERSED, Decimal("100.00"), Decimal("0.00"), Decimal("0.00")),
+    ]
+
+
+@pytest.mark.parametrize("captured_first", [True, False])
+async def test_captured_wins_when_both_captured_and_reversed_arrive(
+    deliver: Deliver, conn: AsyncConnection, captured_first: bool
+) -> None:
+    await deliver(funded("1000.00"))
+    await deliver(auth_created("auth_1", "100.00"))
+    contradiction = [auth_captured("auth_1", "90.00"), auth_reversed("auth_1", "100.00")]
+
+    for payload in contradiction if captured_first else reversed(contradiction):
+        await deliver(payload)
+
+    await assert_balance(conn, "acc_1", available="910.00", pending="0.00")
+    [tx] = await list_transactions(conn, "acc_1")
+    assert (tx.status, tx.captured_amount) == (CAPTURED, Decimal("90.00"))
